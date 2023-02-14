@@ -1,0 +1,68 @@
+import cv2
+import numpy as np
+
+# Initialize video capture object
+cap = cv2.VideoCapture("VIDEO PATH")
+
+# Define the feature detector and descriptor extractor
+detector = cv2.ORB_create()
+
+# Initialize the first frame
+_, prev_frame = cap.read()
+prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+prev_pts = cv2.goodFeaturesToTrack(
+    prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30
+)
+
+while True:
+    # Capture the current frame
+    _, curr_frame = cap.read()
+    curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
+
+    # Compute the optical flow between the current and previous frames
+    curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
+
+    # Keep only the points with valid status
+    idx = np.where(status == 1)[0]
+    prev_pts = prev_pts[idx]
+    curr_pts = curr_pts[idx]
+
+    # Estimate the essential matrix
+    E, _ = cv2.findEssentialMat(
+        prev_pts,
+        curr_pts,
+        focal=1.0,
+        pp=(0.0, 0.0),
+        method=cv2.RANSAC,
+        prob=0.999,
+        threshold=1.0,
+    )
+    _, R, t, _ = cv2.recoverPose(E, prev_pts, curr_pts)
+
+    # Calculate the camera motion between the frames
+    R_inv = np.linalg.inv(R)
+    t_inv = np.dot(-t.T, R_inv)
+
+    # Correct the current frame using the estimated motion
+    center = (curr_frame.shape[1] // 2, curr_frame.shape[0] // 2)
+    affine_mat = cv2.getRotationMatrix2D(center, 0, 1)
+    affine_mat[0:2, 2] = -t_inv[:, 0:2].flatten()
+    curr_frame = cv2.warpAffine(
+        curr_frame, affine_mat, (curr_frame.shape[1], curr_frame.shape[0])
+    )
+    # Display the stabilized video
+    cv2.imshow("Stabilized Video", curr_frame)
+
+    # Update previous frame and points
+    prev_gray = curr_gray
+    prev_pts = cv2.goodFeaturesToTrack(
+        prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30
+    )
+
+    # Exit the loop if the 'q' key is pressed
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+
+# Release the video capture and close all windows
+cap.release()
+cv2.destroyAllWindows()
